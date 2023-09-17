@@ -1,77 +1,70 @@
-import os
-import sys
-import cPickle as pickle
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
+from tensorflow.keras.datasets import cifar10, cifar100
 
-print("keras_version: {}".format(keras.__version__))
+def read_data(dataset="cifar10", num_valids=5000):
+    """Returns separate NumPy arrays for images and labels with train, valid, and test splits."""
+    images = {
+        "train": None,
+        "valid": None,
+        "test": None
+    }
 
-def _read_data(data_path, train_files):
-  """Reads CIFAR-10 format data. Always returns NHWC format.
+    labels = {
+        "train": None,
+        "valid": None,
+        "test": None
+    }
 
-  Returns:
-    images: np tensor of size [N, H, W, C]
-    labels: np tensor of size [N]
-  """
-  images, labels = [], []
-  for file_name in train_files:
-    print file_name
-    full_name = os.path.join(data_path, file_name)
-    with open(full_name) as finp:
-      data = pickle.load(finp)
-      batch_images = data["data"].astype(np.float32) / 255.0
-      batch_labels = np.array(data["labels"], dtype=np.int32)
-      images.append(batch_images)
-      labels.append(batch_labels)
-  images = np.concatenate(images, axis=0)
-  labels = np.concatenate(labels, axis=0)
-  images = np.reshape(images, [-1, 3, 32, 32])
-  images = np.transpose(images, [0, 2, 3, 1])
+    if dataset == "cifar10":
+        (x_train, y_train), (x_test, y_test) = cifar10.load_data()
+    elif dataset == "cifar100":
+        (x_train, y_train), (x_test, y_test) = cifar100.load_data()
+    else:
+        raise ValueError("dataset must be either 'cifar10' or 'cifar100'")
 
-  return images, labels
+    # Normalize pixel values to the range [0,1]
+    x_train = x_train.astype("float32") / 255.0
+    x_test = x_test.astype("float32") / 255.0
+    
+    # Compute mean and standard deviation
+    mean = np.mean(x_train, axis=(0, 1, 2), keepdims=True)
+    std = np.std(x_train, axis=(0, 1, 2), keepdims=True)
+    
+    # Apply normalization
+    x_train = (x_train - mean) / std
+    x_test = (x_test - mean) / std
 
+    # Splitting out validation data from training data
+    validation_length = int(num_valids)
+    x_val, y_val = x_train[:validation_length], y_train[:validation_length]
+    x_train, y_train = x_train[validation_length:], y_train[validation_length:]
 
-def read_data(data_path, num_valids=5000):
-  print "-" * 80
-  print "Reading data"
+    # Apply the same normalization to validation data
+    x_val = (x_val - mean) / std
 
-  images, labels = {}, {}
+    # Fill in the dictionaries
+    images["train"] = x_train
+    images["valid"] = x_val
+    images["test"] = x_test
+    labels["train"] = y_train
+    labels["valid"] = y_val
+    labels["test"] = y_test
 
-  train_files = [
-    "data_batch_1",
-    "data_batch_2",
-    "data_batch_3",
-    "data_batch_4",
-    "data_batch_5",
-  ]
-  test_file = [
-    "test_batch",
-  ]
-  images["train"], labels["train"] = _read_data(data_path, train_files)
+    return images, labels
 
-  if num_valids:
-    images["valid"] = images["train"][-num_valids:]
-    labels["valid"] = labels["train"][-num_valids:]
+# # Call the function to load the CIFAR dataset
+# dataset = read_data(dataset="cifar10", num_valids=5000)
 
-    images["train"] = images["train"][:-num_valids]
-    labels["train"] = labels["train"][:-num_valids]
-  else:
-    images["valid"], labels["valid"] = None, None
+# # Access the images and labels dictionaries
+# images = dataset[0]
+# labels = dataset[1]
 
-  images["test"], labels["test"] = _read_data(data_path, test_file)
-
-  print "Prepropcess: [subtract mean], [divide std]"
-  mean = np.mean(images["train"], axis=(0, 1, 2), keepdims=True)
-  std = np.std(images["train"], axis=(0, 1, 2), keepdims=True)
-
-  print "mean: {}".format(np.reshape(mean * 255.0, [-1]))
-  print "std: {}".format(np.reshape(std * 255.0, [-1]))
-
-  images["train"] = (images["train"] - mean) / std
-  if num_valids:
-    images["valid"] = (images["valid"] - mean) / std
-  images["test"] = (images["test"] - mean) / std
-
-  return images, labels
-
+# # Print some information to verify that it works
+# print("Images - Train Shape:", images["train"].shape)
+# print("Labels - Train Shape:", labels["train"].shape)
+# print("Images - Validation Shape:", images["valid"].shape)
+# print("Labels - Validation Shape:", labels["valid"].shape)
+# print("Images - Test Shape:", images["test"].shape)
+# print("Labels - Test Shape:", labels["test"].shape)

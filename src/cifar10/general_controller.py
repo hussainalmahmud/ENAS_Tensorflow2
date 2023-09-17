@@ -11,7 +11,7 @@ from src.utils import get_train_ops
 from src.common_ops import stack_lstm
 
 from tensorflow.python.training import moving_averages
-from src.cifar10 import fr_globals
+# from src.cifar10 import fr_globals
 
 class GeneralController(Controller):
   def __init__(self,
@@ -49,8 +49,8 @@ class GeneralController(Controller):
                *args,
                **kwargs):
 
-    print "-" * 80
-    print "Building ConvController"
+    print( "-" * 80)
+    print( "Building ConvController")
 
     self.search_for = search_for
     self.search_whole_channels = search_whole_channels
@@ -94,37 +94,35 @@ class GeneralController(Controller):
     self._build_sampler()
 
   def _create_params(self):
-    '''
-    Create the parameters for the controller and the embedding for the skip connections
-    '''
-    initializer = tf.random_uniform_initializer(minval=-0.1, maxval=0.1)
-    with tf.variable_scope(self.name, initializer=initializer):
-      with tf.variable_scope("lstm"):
-        self.w_lstm = []
-        for layer_id in xrange(self.lstm_num_layers):
-          with tf.variable_scope("layer_{}".format(layer_id)):
-            w = tf.get_variable("w", [2 * self.lstm_size, 4 * self.lstm_size])
-            self.w_lstm.append(w)
+      '''
+      Create the parameters for the controller and the embedding for the skip connections
+      '''
+      initializer = tf.initializers.RandomUniform(minval=-0.1, maxval=0.1)
 
-      self.g_emb = tf.get_variable("g_emb", [1, self.lstm_size])
+      self.w_lstm = []
+
+      for layer_id in range(self.lstm_num_layers):
+          w_name = "w_{}".format(layer_id)
+          w = tf.Variable(initializer(shape=[2 * self.lstm_size, 4 * self.lstm_size]), name=w_name, trainable=True)
+          self.w_lstm.append(w)
+
+      self.g_emb = tf.Variable(initializer(shape=[1, self.lstm_size]), name="g_emb", trainable=True)
+
       # if self.search_whole_channels:
-      with tf.variable_scope("emb"):
-        self.w_emb = tf.get_variable(
-          "w", [self.num_branches, self.lstm_size])
-      with tf.variable_scope("softmax"):
-        self.w_soft = tf.get_variable(
-          "w", [self.lstm_size, self.num_branches])
+      self.w_emb = tf.Variable(initializer(shape=[self.num_branches, self.lstm_size]), name="w_emb", trainable=True)
 
-      with tf.variable_scope("attention"):
-        self.w_attn_1 = tf.get_variable("w_1", [self.lstm_size, self.lstm_size])
-        self.w_attn_2 = tf.get_variable("w_2", [self.lstm_size, self.lstm_size])
-        self.v_attn = tf.get_variable("v", [self.lstm_size, 1])
+      self.w_soft = tf.Variable(initializer(shape=[self.lstm_size, self.num_branches]), name="w_soft", trainable=True)
+
+      self.w_attn_1 = tf.Variable(initializer(shape=[self.lstm_size, self.lstm_size]), name="w_attn_1", trainable=True)
+      self.w_attn_2 = tf.Variable(initializer(shape=[self.lstm_size, self.lstm_size]), name="w_attn_2", trainable=True)
+      self.v_attn = tf.Variable(initializer(shape=[self.lstm_size, 1]), name="v_attn", trainable=True)
+
 
   def _build_sampler(self):
     """Build the sampler ops and the log_prob ops."""
 
-    print "-" * 80
-    print "Build controller sampler"
+    print( "-" * 80)
+    print( "Build controller sampler")
     anchors = []
     anchors_w_1 = []
 
@@ -134,18 +132,18 @@ class GeneralController(Controller):
     skip_count = []
     skip_penaltys = []
 
-    with open('/home/hussain/cgras_enas/LookupTable.csv', mode='r') as inp:
+    with open('/Users/hussain/github_repo/ENAS_CGRA_TF2/LookupTable.csv', mode='r') as inp:
       reader = csv.reader(inp)
       self.dict = {rows[0]:rows[1] for rows in reader}
 
     prev_c = [tf.zeros([1, self.lstm_size], tf.float32) for _ in
-              xrange(self.lstm_num_layers)]
+              range(self.lstm_num_layers)]
     prev_h = [tf.zeros([1, self.lstm_size], tf.float32) for _ in
-              xrange(self.lstm_num_layers)]
+              range(self.lstm_num_layers)]
     inputs = self.g_emb
     skip_targets = tf.constant([1.0 - self.skip_target, self.skip_target],
                                dtype=tf.float32)
-    for layer_id in xrange(self.num_layers):
+    for layer_id in range(self.num_layers):
       next_c, next_h = stack_lstm(inputs, prev_c, prev_h, self.w_lstm)
       prev_c, prev_h = next_c, next_h
       logit = tf.matmul(next_h[-1], self.w_soft)
@@ -154,8 +152,8 @@ class GeneralController(Controller):
       if self.tanh_constant is not None:
         logit = self.tanh_constant * tf.tanh(logit)
       if self.search_for == "macro" or self.search_for == "branch":
-        branch_id = tf.multinomial(logit, 1)
-        branch_id = tf.to_int32(branch_id)
+        branch_id = tf.random.categorical(logits=logit, num_samples=1)
+        branch_id = tf.cast(branch_id, tf.int32)
         branch_id = tf.reshape(branch_id, [1])
       elif self.search_for == "connection":
         branch_id = tf.constant([0], dtype=tf.int32)
@@ -183,25 +181,26 @@ class GeneralController(Controller):
           logit = self.tanh_constant * tf.tanh(logit)
 
         # Add SKIP CONNECTIONS 
-        skip = tf.multinomial(logit, 1)
-        skip = tf.to_int32(skip)
+        skip = tf.random.categorical(logits=logit, num_samples=1)
+        skip = tf.cast(skip, tf.int32)
         skip = tf.reshape(skip, [layer_id])
         arc_seq.append(skip)
 
         skip_prob = tf.sigmoid(logit)
-        kl = skip_prob * tf.log(skip_prob / skip_targets)
+        kl = skip_prob * tf.math.log(skip_prob / skip_targets)
         kl = tf.reduce_sum(kl)
         skip_penaltys.append(kl)
 
         log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(
           logits=logit, labels=skip)
-        log_probs.append(tf.reduce_sum(log_prob, keep_dims=True))
+        log_probs.append(tf.reduce_sum(log_prob, keepdims=True))
 
         entropy = tf.stop_gradient(
-          tf.reduce_sum(log_prob * tf.exp(-log_prob), keep_dims=True))
+          tf.reduce_sum(log_prob * tf.exp(-log_prob), keepdims=True))
         entropys.append(entropy)
 
-        skip = tf.to_float(skip)
+        # skip = tf.to_float(skip)
+        skip = tf.cast(skip, tf.float32)
         skip = tf.reshape(skip, [1, layer_id])
         skip_count.append(tf.reduce_sum(skip))
         inputs = tf.matmul(skip, tf.concat(anchors, axis=0))
@@ -231,27 +230,30 @@ class GeneralController(Controller):
     '''
     get_operation is used to get the operation of the current layer and calculate the cycles
     '''
-    fr_pos = fr_globals.fr_pos 
+    # fr_pos = fr_globals.fr_pos 
+    fr_pos = [1,2,3,4] # temporary
     self.skip_num2 = tf.constant(0)
 
     cycle = []
-    cycle.append(tf.py_func(self._calculate_cycle,[7,3,self.out_filters,32,0],tf.float64))
+    # cycle.append(tf.py_func(self._calculate_cycle,[7,3,self.out_filters,32,0],tf.float64))
+    cycle.append(tf.numpy_function(self._calculate_cycle, [7,3,self.out_filters,32,0], tf.float64))
+
     self.input_shape = 32
     for i in range(0,self.num_layers):
       print("self.num_layers hereee",self.num_layers)
-      cycle.append(tf.py_func(self._calculate_cycle,[self.sample_arc[(i*i+i)//2], self.out_filters, self.out_filters, self.input_shape,i],tf.float64))
+      cycle.append(tf.numpy_function(self._calculate_cycle,[self.sample_arc[(i*i+i)//2], self.out_filters, self.out_filters, self.input_shape,i],tf.float64))
       if i>0:
         for j in range(1,i+1): # add the number of skip connections
           self.skip_num2 = tf.add(self.skip_num2,self.sample_arc[(((i*i)+i)//2)+j])
-        cycle.append(tf.py_func(self._calculate_cycle,[9, (self.skip_num2 * self.out_filters),self.out_filters,self.input_shape,i],tf.float64))
+        cycle.append(tf.numpy_function(self._calculate_cycle,[9, (self.skip_num2 * self.out_filters),self.out_filters,self.input_shape,i],tf.float64))
         self.skip_num2 = tf.constant(0)
 
       f = i + 1
       if f in fr_pos:
         print("original " ,i, "j",f, "i+1",i+1 )
-        cycle.append(tf.py_func(self._calculate_cycle,[8, self.out_filters,self.out_filters,self.input_shape,1],tf.float64))
+        cycle.append(tf.numpy_function(self._calculate_cycle,[8, self.out_filters,self.out_filters,self.input_shape,1],tf.float64))
         self.input_shape = self.input_shape // 2
-    cycle.append(tf.py_func(self._calculate_cycle,[13, self.out_filters,self.out_filters, self.input_shape,1],tf.float64))
+    cycle.append(tf.numpy_function(self._calculate_cycle,[13, self.out_filters,self.out_filters, self.input_shape,1],tf.float64))
     self.cycles = cycle 
 
 
@@ -312,17 +314,26 @@ class GeneralController(Controller):
     else:
       self.max_cycle = 324971026. 
       self.min_cycle = 303490.    
-    self.cycle_norm = (tf.to_float(tf.reduce_sum(self.cycles)) - self.min_cycle)/(self.max_cycle - self.min_cycle)
+    # self.cycle_norm = (tf.to_float(tf.reduce_sum(self.cycles)) - self.min_cycle)/(self.max_cycle - self.min_cycle)
+    self.cycle_norm = (tf.cast(tf.reduce_sum(self.cycles), tf.float32) - self.min_cycle)/(self.max_cycle - self.min_cycle)
+
       
     child_model.build_valid_rl()
-    self.valid_acc = (tf.to_float(child_model.valid_shuffle_acc) /
-                      tf.to_float(child_model.batch_size))
+    # self.valid_acc = (tf.to_float(child_model.valid_shuffle_acc) /
+    #                   tf.to_float(child_model.batch_size))
+    self.valid_acc = (tf.cast(child_model.valid_shuffle_acc, tf.float32) /
+                  tf.cast(child_model.batch_size, tf.float32))
+
 
     self.reward = self.valid_acc
     self.new_reward = self.valid_acc - (self.alpha_value * self.cycle_norm)
 
-    normalize = tf.to_float(self.num_layers * (self.num_layers - 1) / 2)
-    self.skip_rate = tf.to_float(self.skip_count) / normalize
+    # normalize = tf.to_float(self.num_layers * (self.num_layers - 1) / 2)
+    normalize = tf.cast(self.num_layers * (self.num_layers - 1) / 2, tf.float32)
+
+    # self.skip_rate = tf.to_float(self.skip_count) / normalize
+    self.skip_rate = tf.cast(self.skip_count, tf.float32) / normalize
+
 
     self.sample_log_prob = tf.reduce_sum(self.sample_log_prob)
     self.baseline = tf.Variable(0.0, dtype=tf.float32, trainable=False)
@@ -341,9 +352,9 @@ class GeneralController(Controller):
         0, dtype=tf.int32, trainable=False, name="train_step")
     tf_variables = [var
         for var in tf.trainable_variables() if var.name.startswith(self.name)]
-    print "-" * 80
+    print( "-" * 80)
     for var in tf_variables:
-      print var
+      print( var)
 
     self.train_op, self.lr, self.grad_norm, self.optimizer = get_train_ops(
       self.loss,

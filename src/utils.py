@@ -7,45 +7,85 @@ import numpy as np
 import tensorflow as tf
 
 
+import argparse
+
 user_flags = []
 
-
 def DEFINE_string(name, default_value, doc_string):
-  tf.app.flags.DEFINE_string(name, default_value, doc_string)
-  global user_flags
-  user_flags.append(name)
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument(f"--{name}", type=str, default=default_value, help=doc_string)
+    global user_flags
+    user_flags.append((name, default_value, doc_string))
 
 def DEFINE_integer(name, default_value, doc_string):
-  tf.app.flags.DEFINE_integer(name, default_value, doc_string)
-  global user_flags
-  user_flags.append(name)
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument(f"--{name}", type=int, default=default_value, help=doc_string)
+    global user_flags
+    user_flags.append((name, default_value, doc_string))
 
 def DEFINE_float(name, default_value, doc_string):
-  tf.app.flags.DEFINE_float(name, default_value, doc_string)
-  global user_flags
-  user_flags.append(name)
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument(f"--{name}", type=float, default=default_value, help=doc_string)
+    global user_flags
+    user_flags.append((name, default_value, doc_string))
 
 def DEFINE_boolean(name, default_value, doc_string):
-  tf.app.flags.DEFINE_boolean(name, default_value, doc_string)
-  global user_flags
-  user_flags.append(name)
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument(f"--{name}", action="store_true", help=doc_string)
+    parser.add_argument(f"--no_{name}", action="store_false")
+    parser.set_defaults(**{name: default_value})
+    global user_flags
+    user_flags.append((name, default_value, doc_string))
 
 def print_user_flags(line_limit=80):
-  print("-" * 80)
+    print("-" * 80)
 
-  global user_flags
-  FLAGS = tf.app.flags.FLAGS
+    for name, default_value, doc_string in user_flags:
+        log_string = name
+        log_string += "." * (line_limit - len(name) - len(str(default_value)))
+        log_string += str(default_value)
+        print(log_string)
 
-  for flag_name in sorted(user_flags):
-    value = "{}".format(getattr(FLAGS, flag_name))
-    log_string = flag_name
-    log_string += "." * (line_limit - len(flag_name) - len(value))
-    log_string += value
-    print(log_string)
+
+# user_flags = []
+
+
+# def DEFINE_string(name, default_value, doc_string):
+#   tf.app.flags.DEFINE_string(name, default_value, doc_string)
+#   global user_flags
+#   user_flags.append(name)
+
+
+# def DEFINE_integer(name, default_value, doc_string):
+#   tf.app.flags.DEFINE_integer(name, default_value, doc_string)
+#   global user_flags
+#   user_flags.append(name)
+
+
+# def DEFINE_float(name, default_value, doc_string):
+#   tf.app.flags.DEFINE_float(name, default_value, doc_string)
+#   global user_flags
+#   user_flags.append(name)
+
+
+# def DEFINE_boolean(name, default_value, doc_string):
+#   tf.app.flags.DEFINE_boolean(name, default_value, doc_string)
+#   global user_flags
+#   user_flags.append(name)
+
+
+# def print_user_flags(line_limit=80):
+#   print("-" * 80)
+
+#   global user_flags
+#   FLAGS = tf.app.flags.FLAGS
+
+#   for flag_name in sorted(user_flags):
+#     value = "{}".format(getattr(FLAGS, flag_name))
+#     log_string = flag_name
+#     log_string += "." * (line_limit - len(flag_name) - len(value))
+#     log_string += value
+#     print(log_string)
 
 
 class TextColors:
@@ -64,6 +104,10 @@ class Logger(object):
     self.terminal = sys.stdout
     self.log = open(output_file, "a")
 
+
+  def flush(self):
+    pass
+  
   def write(self, message):
     self.terminal.write(message)
     self.terminal.flush()

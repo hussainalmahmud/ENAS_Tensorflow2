@@ -21,12 +21,12 @@ from src.cifar10.image_ops import global_avg_pool
 from src.utils import count_model_params
 from src.utils import get_train_ops
 from src.common_ops import create_weight
-from src.cifar10 import fr_globals
+# from src.cifar10 import fr_globals
 from src.utils import DEFINE_string
-flags = tf.app.flags
-FLAGS = flags.FLAGS
+# flags = tf.app.flags
+# FLAGS = flags.FLAGS
 
-DEFINE_string("child_fr_fixed", None, "provide fr for fixed arc")
+# DEFINE_string("child_fr_fixed", None, "provide fr for fixed arc")
 
 class GeneralChild(Model):
   def __init__(self,
@@ -100,12 +100,12 @@ class GeneralChild(Model):
 
     pool_distance = self.num_layers // 3
     self.pool_layers = [pool_distance - 1, 2 * pool_distance - 1]
-    print("child_fr_fixed chillddddd", FLAGS.child_fr_fixed)
+    # print("child_fr_fixed chillddddd", FLAGS.child_fr_fixed)
 
-    # change FLAGS.child_fr_fixed to a list 
-    self.child_fr_fixed = FLAGS.child_fr_fixed
-    if FLAGS.child_fr_fixed is not None:
-      self.child_fr_fixed = list(map(int, FLAGS.child_fr_fixed.split()))
+    # # change FLAGS.child_fr_fixed to a list 
+    # self.child_fr_fixed = FLAGS.child_fr_fixed
+    # if FLAGS.child_fr_fixed is not None:
+    #   self.child_fr_fixed = list(map(int, FLAGS.child_fr_fixed.split()))
 
 
   def _get_C(self, x):
@@ -228,26 +228,7 @@ class GeneralChild(Model):
           else:
             x = self._fixed_layer(layer_id, layers, start_idx, out_filters, is_training)
           layers.append(x)
-          if self.fixed_arc is None:
-            if layer_id in fr_globals.fr_pos:
-              with tf.variable_scope("pool_at_{0}".format(layer_id)):
-                pooled_layers = []
-                for i, layer in enumerate(layers):
-                  with tf.variable_scope("from_{0}".format(i)):
-                    x = self._factorized_reduction(
-                      layer, out_filters, 2, is_training)
-                  pooled_layers.append(x)
-                layers = pooled_layers
-          elif self.fixed_arc is not None:
-            if layer_id in self.child_fr_fixed:
-              with tf.variable_scope("pool_at_{0}".format(layer_id)):
-                pooled_layers = []
-                for i, layer in enumerate(layers):
-                  with tf.variable_scope("from_{0}".format(i)):
-                    x = self._factorized_reduction(
-                      layer, out_filters, 2, is_training)
-                  pooled_layers.append(x)
-                layers = pooled_layers
+          
         start_idx += 1 + layer_id
         print(layers[-1])
 

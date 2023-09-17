@@ -3,19 +3,17 @@
 export PYTHONPATH="$(pwd)"
 
 python src/cifar10/main.py \
-  --data_format="NCHW" \
+  --data_format="NCWH" \
   --search_for="macro" \
   --reset_output_dir \
-  --data_path="data/cifar10" \
-  --output_dir="outputs/search_cf10" \
   --batch_size=128 \
   --num_epochs=310 \
   --log_every=50 \
   --eval_every_epochs=1 \
   --child_use_aux_heads \
-  --child_num_layers=12 \
-  --child_out_filters=96 \
-  --controller_PE_Size=168 \
+  --child_num_layers=4 \
+  --child_out_filters=32 \
+  --controller_PE_Size=16 \
   --controller_dataset="cifar10" \
   --controller_Alpha_value=0.0 \
   --child_l2_reg=0.00025 \
