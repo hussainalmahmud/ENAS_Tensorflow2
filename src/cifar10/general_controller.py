@@ -1,7 +1,8 @@
+#-*- coding : utf-8 -*-
+# coding: utf-8
 import sys
 import os
 import time
-import csv
 
 import numpy as np
 import tensorflow as tf
@@ -11,9 +12,8 @@ from src.utils import get_train_ops
 from src.common_ops import stack_lstm
 
 from tensorflow.python.training import moving_averages
-# from src.cifar10 import fr_globals
 
-class GeneralController(Controller):
+class GeneralController(tf.Module):
   def __init__(self,
                search_for="both",
                search_whole_channels=False,
@@ -42,13 +42,9 @@ class GeneralController(Controller):
                skip_target=0.8,
                skip_weight=0.5,
                name="controller",
-               pe_size=4,
-               alpha_value=0,
-               dataset="cifar10",
-               input_shape=32,
                *args,
                **kwargs):
-
+    super(GeneralController, self).__init__(name='controller')
     print( "-" * 80)
     print( "Building ConvController")
 
@@ -82,95 +78,163 @@ class GeneralController(Controller):
     self.num_aggregate = num_aggregate
     self.num_replicas = num_replicas
     self.name = name
+    self.baseline = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+    self.lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+          lr_init,
+          decay_steps=self.lr_dec_every,
+          decay_rate=self.lr_dec_rate,
+          staircase=True)
 
-    ### PE Size and Alpha value
-    self.pe_size = pe_size
-    self.alpha_value = alpha_value
-    self.dataset = dataset
-    self.input_shape = input_shape
-
-
-    self._create_params()
-    self._build_sampler()
+    if self.optim_algo == "momentum":
+      self.opt = tf.compat.v1.train.MomentumOptimizer(
+        self.lr_schedule, 0.9, use_locking=True, use_nesterov=True)
+    elif optim_algo == "sgd":
+      self.opt = tf.keras.optimizers.SGD(learning_rate=self.lr_schedule)
+    elif optim_algo == "adam":
+      # self.child_opt = tf.keras.optimizers.Adam(learning_rate=self.lr_schedule)  # beta1=0.0, epsilon=1e-3
+      self.opt = tf.keras.optimizers.legacy.Adam(learning_rate=self.lr_schedule)  # beta1=0.0, epsilon=1e-3
+    else:
+      raise ValueError("Unknown optim_algo {}".format(optim_algo))
+    self.create_para_do = True
 
   def _create_params(self):
-      '''
-      Create the parameters for the controller and the embedding for the skip connections
-      '''
-      initializer = tf.initializers.RandomUniform(minval=-0.1, maxval=0.1)
+    initializer = tf.random_uniform_initializer(minval=-0.1, maxval=0.1)
+    self.w_lstm = []
+    for layer_id in range(self.lstm_num_layers):
+      # tf.random.truncated_normal([2 * self.lstm_size, self.select_num * self.lstm_size])
+      w = tf.Variable(initializer([2 * self.lstm_size, 4 * self.lstm_size]),
+                      name="{}_layer_{}_w".format('lstm', layer_id))
+      self.w_lstm.append(w)
 
-      self.w_lstm = []
+    self.g_emb = tf.Variable(initializer([1, self.lstm_size]), name="g_emb")
+    if self.search_whole_channels:
+      self.w_emb = tf.Variable(initializer([self.num_branches, self.lstm_size]),
+                                 name="emb_w")
+      self.w_soft = tf.Variable(initializer([self.lstm_size, self.num_branches]),
+                                name="softmax_w")
+    else:
+      self.w_emb = {"start": [], "count": []}
+      for branch_id in range(0, self.num_branches):
+        with tf.variable_scope("branch_{}".format(branch_id)):
+          self.w_emb["start"].append(tf.Variable(initializer([self.out_filters, self.lstm_size]),
+                                   name="w_strart_{}".format(branch_id)))
+          self.w_emb["count"].append(tf.Variable(initializer([self.out_filters - 1, self.lstm_size]),
+                                                 name="w_count_{}".format(branch_id)))
 
-      for layer_id in range(self.lstm_num_layers):
-          w_name = "w_{}".format(layer_id)
-          w = tf.Variable(initializer(shape=[2 * self.lstm_size, 4 * self.lstm_size]), name=w_name, trainable=True)
-          self.w_lstm.append(w)
+      self.w_soft = {"start": [], "count": []}
+      with tf.variable_scope("softmax"):
+        for branch_id in range(0,self.num_branches):
+          with tf.variable_scope("branch_{}".format(branch_id)):
+            self.w_soft["start"].append(tf.get_variable(
+              "w_start", [self.lstm_size, self.out_filters]))
+            self.w_soft["count"].append(tf.get_variable(
+              "w_count", [self.lstm_size, self.out_filters - 1]))
 
-      self.g_emb = tf.Variable(initializer(shape=[1, self.lstm_size]), name="g_emb", trainable=True)
+    self.w_attn_1 = tf.Variable(initializer([self.lstm_size, self.lstm_size]),
+                                name="attention_w1")
+    self.w_attn_2 = tf.Variable(initializer([self.lstm_size, self.lstm_size]),
+                                name="attention_w2")
+    self.v_attn = tf.Variable(initializer([self.lstm_size, 1]), name="attention_v")
 
-      # if self.search_whole_channels:
-      self.w_emb = tf.Variable(initializer(shape=[self.num_branches, self.lstm_size]), name="w_emb", trainable=True)
-
-      self.w_soft = tf.Variable(initializer(shape=[self.lstm_size, self.num_branches]), name="w_soft", trainable=True)
-
-      self.w_attn_1 = tf.Variable(initializer(shape=[self.lstm_size, self.lstm_size]), name="w_attn_1", trainable=True)
-      self.w_attn_2 = tf.Variable(initializer(shape=[self.lstm_size, self.lstm_size]), name="w_attn_2", trainable=True)
-      self.v_attn = tf.Variable(initializer(shape=[self.lstm_size, 1]), name="v_attn", trainable=True)
-
-
-  def _build_sampler(self):
+  def _build_sampler(self, training=True):
     """Build the sampler ops and the log_prob ops."""
+    # print("-" * 80)
+    # print("Build controller sampler")
+    if self.create_para_do:
+      self._create_params()
+      self.create_para_do = False
 
-    print( "-" * 80)
-    print( "Build controller sampler")
     anchors = []
     anchors_w_1 = []
-
     arc_seq = []
-    entropys = []
-    log_probs = []
-    skip_count = []
-    skip_penaltys = []
-
-    with open('/Users/hussain/github_repo/ENAS_CGRA_TF2/LookupTable.csv', mode='r') as inp:
-      reader = csv.reader(inp)
-      self.dict = {rows[0]:rows[1] for rows in reader}
 
     prev_c = [tf.zeros([1, self.lstm_size], tf.float32) for _ in
-              range(self.lstm_num_layers)]
+              range(0, self.lstm_num_layers)]
     prev_h = [tf.zeros([1, self.lstm_size], tf.float32) for _ in
-              range(self.lstm_num_layers)]
+              range(0, self.lstm_num_layers)]
     inputs = self.g_emb
-    skip_targets = tf.constant([1.0 - self.skip_target, self.skip_target],
-                               dtype=tf.float32)
-    for layer_id in range(self.num_layers):
-      next_c, next_h = stack_lstm(inputs, prev_c, prev_h, self.w_lstm)
-      prev_c, prev_h = next_c, next_h
-      logit = tf.matmul(next_h[-1], self.w_soft)
-      if self.temperature is not None:
-        logit /= self.temperature
-      if self.tanh_constant is not None:
-        logit = self.tanh_constant * tf.tanh(logit)
-      if self.search_for == "macro" or self.search_for == "branch":
-        branch_id = tf.random.categorical(logits=logit, num_samples=1)
-        branch_id = tf.cast(branch_id, tf.int32)
-        branch_id = tf.reshape(branch_id, [1])
-      elif self.search_for == "connection":
-        branch_id = tf.constant([0], dtype=tf.int32)
+    if training:
+      entropys = []
+      log_probs = []
+      skip_count = []
+      skip_penaltys = []
+      skip_targets = tf.constant([1.0 - self.skip_target, self.skip_target],
+                                 dtype=tf.float32)
+
+    for layer_id in range(0, self.num_layers):
+      if self.search_whole_channels:
+        timetmp0 = time.time()
+        next_c, next_h = stack_lstm(inputs, prev_c, prev_h, self.w_lstm)
+        ddd = time.time() - timetmp0
+        prev_c, prev_h = next_c, next_h
+        logit = tf.matmul(next_h[-1], self.w_soft)  # w_soft决定输出5个
+        if self.temperature is not None:
+          logit /= self.temperature
+        if self.tanh_constant is not None:
+          logit = self.tanh_constant * tf.tanh(logit)
+        if self.search_for == "macro" or self.search_for == "branch":
+          branch_id = tf.random.categorical(logit, 1, dtype=tf.int32)
+          branch_id = tf.reshape(branch_id, [1])
+        elif self.search_for == "connection":
+          branch_id = tf.constant([0], dtype=tf.int32)
+        else:
+          raise ValueError("Unknown search_for {}".format(self.search_for))
+        arc_seq.append(branch_id)
+        if training:
+          log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits=logit, labels=branch_id)  # 计算选中branch_id的概率
+          log_probs.append(log_prob)
+          entropy = tf.stop_gradient(log_prob * tf.exp(-log_prob))
+          entropys.append(entropy)   # 可作为reward的一部分
+        inputs = tf.nn.embedding_lookup(self.w_emb, branch_id)  # embedding
+        # TODO cpu
       else:
-        raise ValueError("Unknown search_for {}".format(self.search_for))
-      arc_seq.append(branch_id)
-      log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=logit, labels=branch_id)
-      log_probs.append(log_prob)
-      entropy = tf.stop_gradient(log_prob * tf.exp(-log_prob))
-      entropys.append(entropy)
-      inputs = tf.nn.embedding_lookup(self.w_emb, branch_id)
-      
-      next_c, next_h = stack_lstm(inputs, prev_c, prev_h, self.w_lstm)
+        for branch_id in range(0, self.num_branches):
+          next_c, next_h = stack_lstm(inputs, prev_c, prev_h, self.w_lstm)
+          prev_c, prev_h = next_c, next_h
+          logit = tf.matmul(next_h[-1], self.w_soft["start"][branch_id])
+          if self.temperature is not None:
+            logit /= self.temperature
+          if self.tanh_constant is not None:
+            logit = self.tanh_constant * tf.tanh(logit)
+          start = tf.multinomial(logit, 1)
+          start = tf.to_int32(start)
+          start = tf.reshape(start, [1])
+          arc_seq.append(start)
+          log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits=logit, labels=start)
+          log_probs.append(log_prob)
+          entropy = tf.stop_gradient(log_prob * tf.exp(-log_prob))
+          entropys.append(entropy)
+          inputs = tf.nn.embedding_lookup(self.w_emb["start"][branch_id], start)
+
+          next_c, next_h = stack_lstm(inputs, prev_c, prev_h, self.w_lstm)
+          prev_c, prev_h = next_c, next_h
+          logit = tf.matmul(next_h[-1], self.w_soft["count"][branch_id])
+          if self.temperature is not None:
+            logit /= self.temperature
+          if self.tanh_constant is not None:
+            logit = self.tanh_constant * tf.tanh(logit)
+          mask = tf.range(0, limit=self.out_filters-1, delta=1, dtype=tf.int32)
+          mask = tf.reshape(mask, [1, self.out_filters - 1])
+          mask = tf.less_equal(mask, self.out_filters-1 - start)
+          logit = tf.where(mask, x=logit, y=tf.fill(tf.shape(logit), -np.inf))
+          count = tf.multinomial(logit, 1)
+          count = tf.to_int32(count)
+          count = tf.reshape(count, [1])
+          arc_seq.append(count + 1)
+          log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits=logit, labels=count)
+          log_probs.append(log_prob)
+          entropy = tf.stop_gradient(log_prob * tf.exp(-log_prob))
+          entropys.append(entropy)
+          inputs = tf.nn.embedding_lookup(self.w_emb["count"][branch_id], count)
+
+      next_c, next_h = stack_lstm(inputs, prev_c, prev_h, self.w_lstm)  # TODO w_lstm没有更新
       prev_c, prev_h = next_c, next_h
 
       if layer_id > 0:
+        # anchors，w_attn_2，v_attn只有在这里用   # anchors包含了所有输出
         query = tf.concat(anchors_w_1, axis=0)
         query = tf.tanh(query + tf.matmul(next_h[-1], self.w_attn_2))
         query = tf.matmul(query, self.v_attn)
@@ -180,195 +244,93 @@ class GeneralController(Controller):
         if self.tanh_constant is not None:
           logit = self.tanh_constant * tf.tanh(logit)
 
-        # Add SKIP CONNECTIONS 
-        skip = tf.random.categorical(logits=logit, num_samples=1)
-        skip = tf.cast(skip, tf.int32)
-        skip = tf.reshape(skip, [layer_id])
+        skip = tf.random.categorical(logit, 1, dtype=tf.int32)
+        skip = tf.reshape(skip, [layer_id])  # TODO 直接展成layer_id个0/1？
         arc_seq.append(skip)
 
-        skip_prob = tf.sigmoid(logit)
-        kl = skip_prob * tf.math.log(skip_prob / skip_targets)
-        kl = tf.reduce_sum(kl)
-        skip_penaltys.append(kl)
+        if training:
+          skip_prob = tf.sigmoid(logit)
+          kl = skip_prob * tf.math.log(skip_prob / skip_targets)
+          kl = tf.reduce_sum(kl)
+          skip_penaltys.append(kl)
 
-        log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(
-          logits=logit, labels=skip)
-        log_probs.append(tf.reduce_sum(log_prob, keepdims=True))
+          log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits=logit, labels=skip)
+          log_probs.append(tf.reduce_sum(log_prob, keepdims=True))
 
-        entropy = tf.stop_gradient(
-          tf.reduce_sum(log_prob * tf.exp(-log_prob), keepdims=True))
-        entropys.append(entropy)
+          entropy = tf.stop_gradient(
+            tf.reduce_sum(log_prob * tf.exp(-log_prob), keepdims=True))
+          entropys.append(entropy)
 
-        # skip = tf.to_float(skip)
-        skip = tf.cast(skip, tf.float32)
-        skip = tf.reshape(skip, [1, layer_id])
-        skip_count.append(tf.reduce_sum(skip))
+        skip = tf.cast(skip, dtype=tf.float32)
+        skip = tf.reshape(skip, [1, layer_id])   # 前几个是否skip
+        if training:
+          skip_count.append(tf.reduce_sum(skip))
         inputs = tf.matmul(skip, tf.concat(anchors, axis=0))
         inputs /= (1.0 + tf.reduce_sum(skip))
       else:
-        inputs = self.g_emb
+        inputs = self.g_emb    # TODO layer_id=1
 
-      anchors.append(next_h[-1])
+      anchors.append(next_h[-1])   # anchors包含了所有输出
       anchors_w_1.append(tf.matmul(next_h[-1], self.w_attn_1))
 
     arc_seq = tf.concat(arc_seq, axis=0)
     self.sample_arc = tf.reshape(arc_seq, [-1])
 
-    entropys = tf.stack(entropys)
-    self.sample_entropy = tf.reduce_sum(entropys)
+    if training:
+      entropys = tf.stack(entropys)
+      self.sample_entropy = tf.reduce_sum(entropys)
 
-    log_probs = tf.stack(log_probs)
-    self.sample_log_prob = tf.reduce_sum(log_probs)
+      log_probs = tf.stack(log_probs)
+      self.sample_log_prob = tf.reduce_sum(log_probs)
 
-    skip_count = tf.stack(skip_count)
-    self.skip_count = tf.reduce_sum(skip_count)
+      skip_count = tf.stack(skip_count)
+      self.skip_count = tf.reduce_sum(skip_count)
 
-    skip_penaltys = tf.stack(skip_penaltys)
-    self.skip_penaltys = tf.reduce_mean(skip_penaltys)
+      skip_penaltys = tf.stack(skip_penaltys)
+      self.skip_penaltys = tf.reduce_mean(skip_penaltys)
+    return self.sample_arc
 
+  def build_trainer(self, child_model, ct_step):
+    with tf.GradientTape(watch_accessed_variables=False) as tape:
+      tape.watch(self.trainable_variables)
+      self._build_sampler()
+      child_model.build_valid_rl(self.sample_arc)   # 还是普通的valid只不过shuffle了数据，得到valid_shuffle_acc
+      self.valid_acc = (tf.cast(child_model.valid_shuffle_acc,dtype=tf.float32 ) /
+                        tf.cast(child_model.eval_batch_size, dtype=tf.float32))
+      self.reward = self.valid_acc
 
-    '''
-    get_operation is used to get the operation of the current layer and calculate the cycles
-    '''
-    # fr_pos = fr_globals.fr_pos 
-    fr_pos = [1,2,3,4] # temporary
-    self.skip_num2 = tf.constant(0)
+      normalize = tf.cast(self.num_layers * (self.num_layers - 1) / 2, dtype=tf.float32)
+      self.skip_rate = tf.cast(self.skip_count, dtype=tf.float32) / normalize
 
-    cycle = []
-    # cycle.append(tf.py_func(self._calculate_cycle,[7,3,self.out_filters,32,0],tf.float64))
-    cycle.append(tf.numpy_function(self._calculate_cycle, [7,3,self.out_filters,32,0], tf.float64))
+      if self.entropy_weight is not None:
+        self.reward += self.entropy_weight * self.sample_entropy
 
-    self.input_shape = 32
-    for i in range(0,self.num_layers):
-      print("self.num_layers hereee",self.num_layers)
-      cycle.append(tf.numpy_function(self._calculate_cycle,[self.sample_arc[(i*i+i)//2], self.out_filters, self.out_filters, self.input_shape,i],tf.float64))
-      if i>0:
-        for j in range(1,i+1): # add the number of skip connections
-          self.skip_num2 = tf.add(self.skip_num2,self.sample_arc[(((i*i)+i)//2)+j])
-        cycle.append(tf.numpy_function(self._calculate_cycle,[9, (self.skip_num2 * self.out_filters),self.out_filters,self.input_shape,i],tf.float64))
-        self.skip_num2 = tf.constant(0)
+      self.sample_log_prob = tf.reduce_sum(self.sample_log_prob)
+      self.baseline.assign_sub((1 - self.bl_dec) * (self.baseline - self.reward))
+      self.loss = self.sample_log_prob * (self.reward - self.baseline)
 
-      f = i + 1
-      if f in fr_pos:
-        print("original " ,i, "j",f, "i+1",i+1 )
-        cycle.append(tf.numpy_function(self._calculate_cycle,[8, self.out_filters,self.out_filters,self.input_shape,1],tf.float64))
-        self.input_shape = self.input_shape // 2
-    cycle.append(tf.numpy_function(self._calculate_cycle,[13, self.out_filters,self.out_filters, self.input_shape,1],tf.float64))
-    self.cycles = cycle 
+      if self.skip_weight is not None:
+        self.loss += self.skip_weight * self.skip_penaltys
+      if self.l2_reg > 0:
+        l2_losses = []
+        for var in self.trainable_variables:
+          l2_losses.append(tf.reduce_sum(var ** 2))
+        l2_loss = tf.add_n(l2_losses)
+        self.loss += self.l2_reg * l2_loss
+    # compute gradients and update variables
+    gradients = tape.gradient(self.loss, self.trainable_variables)
+    self.backward(gradients)
 
+  def backward(self, gradients, step=0):
+    """
+    Args:
+      clip_mode: "global", "norm", or None.
+      moving_average: store the moving average of parameters
+    """
+    self.opt.apply_gradients(zip(gradients, self.trainable_variables))
 
-  def _get_cycle_conv1x1(self,input1,pe_size,c_in ,c_out):
-    c = 0
-    params = [5,input1,1,1,0,pe_size,c_in ,c_out]
-    params_str = ','.join(map(str, params))
-    c += float(self.dict[params_str])
-    return float(c)
-
-  def _calculate_cycle(self, Arc, c_in, c_out,input,layer_num):
-    c = float(0)
-    input1 = int(input)
-    
-    if c_in == 0 or Arc == 0:
-        return float(c)
-
-    arc_params = {
-        1: (0, 3, 1, 1), # Key 1: Conv3x3 (0, 3, 1, 1)
-        2: (1, 3, 1, 0), # Key 2: Depth3x3 (1, 3, 1, 0)
-        3: (2, 5, 1, 1), # Key 3: Conv5x5 (2, 5, 1, 1)
-        4: (3, 5, 1, 0), # Key 4: Depth5x5 (3, 5, 1, 0)
-        5: (5, 1, 1, 0), # Key 5: Conv1x1 Pool (5, 1, 1, 0)
-        6: (5, 1, 1, 0), # Key 6: Conv1x1 Pool (5, 1, 1, 0)
-        7: (7, 3, 1, 1), # Key 7: First Layer Conv3x3 (7, 3, 1, 1)
-        8: (8, 1, 1, 0), # Key 8: FR Layer (8, 1, 1, 0)
-        9: (9, 1, 1, 0), # Key 9: Skip Adjusting Layers (Conv1x1) (9, 1, 1, 0)
-        13: (13, 0, 0, 0) # Key 13: Output Layer FC Layer (13, 0, 0, 0)
-    }
-
-    if Arc in arc_params:
-        idx, k, s, p = arc_params[Arc]
-        if Arc not in (7, 13):
-            # get all cycles except first layer and last layer
-            c += self._get_cycle_conv1x1(input1, self.pe_size, self.out_filters, self.out_filters)
-        params = [idx, input1, k, s, p, self.pe_size, c_in, c_out]
-        if Arc == 13: 
-            class_count = 10 if self.dataset == 'cifar10' else 100
-            params = [13, 32, c_out, class_count, self.pe_size]
-
-        params_str = ','.join(map(str, params))
-        c += float(self.dict[params_str])
-
-    return float(c)
-
-
-  def build_trainer(self, child_model):
-    self.parameter_nums = self.cal_parameters_num()  
-    if self.dataset == 'cifar10':
-        cycles = {
-            16: (135395000.0, 0.0),
-            9: (182414200.0, 0.0),
-            8: (182414200.0, 0.0),
-            4: (358232060.0, 0.0)
-        }
-        if self.pe_size in cycles:
-            self.max_cycle, self.min_cycle = cycles[self.pe_size] 
-    else:
-      self.max_cycle = 324971026. 
-      self.min_cycle = 303490.    
-    # self.cycle_norm = (tf.to_float(tf.reduce_sum(self.cycles)) - self.min_cycle)/(self.max_cycle - self.min_cycle)
-    self.cycle_norm = (tf.cast(tf.reduce_sum(self.cycles), tf.float32) - self.min_cycle)/(self.max_cycle - self.min_cycle)
-
-      
-    child_model.build_valid_rl()
-    # self.valid_acc = (tf.to_float(child_model.valid_shuffle_acc) /
-    #                   tf.to_float(child_model.batch_size))
-    self.valid_acc = (tf.cast(child_model.valid_shuffle_acc, tf.float32) /
-                  tf.cast(child_model.batch_size, tf.float32))
-
-
-    self.reward = self.valid_acc
-    self.new_reward = self.valid_acc - (self.alpha_value * self.cycle_norm)
-
-    # normalize = tf.to_float(self.num_layers * (self.num_layers - 1) / 2)
-    normalize = tf.cast(self.num_layers * (self.num_layers - 1) / 2, tf.float32)
-
-    # self.skip_rate = tf.to_float(self.skip_count) / normalize
-    self.skip_rate = tf.cast(self.skip_count, tf.float32) / normalize
-
-
-    self.sample_log_prob = tf.reduce_sum(self.sample_log_prob)
-    self.baseline = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    baseline_update = tf.assign_sub(
-      self.baseline, (1 - self.bl_dec) * (self.baseline - self.new_reward))
-
-    with tf.control_dependencies([baseline_update]):
-      self.reward = tf.identity(self.reward)
-      self.new_reward = tf.identity(self.new_reward)
-      self.skip_num = self.skip_num2
-    self.loss = self.sample_log_prob * (self.new_reward - self.baseline)
-    if self.skip_weight is not None:
-      self.loss += self.skip_weight * self.skip_penaltys
-
-    self.train_step = tf.Variable(
-        0, dtype=tf.int32, trainable=False, name="train_step")
-    tf_variables = [var
-        for var in tf.trainable_variables() if var.name.startswith(self.name)]
-    print( "-" * 80)
-    for var in tf_variables:
-      print( var)
-
-    self.train_op, self.lr, self.grad_norm, self.optimizer = get_train_ops(
-      self.loss,
-      tf_variables,
-      self.train_step,
-      clip_mode=self.clip_mode,
-      grad_bound=self.grad_bound,
-      l2_reg=self.l2_reg,
-      lr_init=self.lr_init,
-      lr_dec_start=self.lr_dec_start,
-      lr_dec_every=self.lr_dec_every,
-      lr_dec_rate=self.lr_dec_rate,
-      optim_algo=self.optim_algo,
-      sync_replicas=self.sync_replicas,
-      num_aggregate=self.num_aggregate,
-      num_replicas=self.num_replicas)
-
+  def eval_controller(self, child_model):
+    self._build_sampler(training=False)  # 更新下sample_arc
+    self.eval_acc = child_model._build_valid(self.sample_arc)
+    return self.sample_arc

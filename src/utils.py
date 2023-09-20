@@ -1,3 +1,5 @@
+#-*- coding : utf-8 -*-
+# coding: utf-8
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -7,85 +9,40 @@ import numpy as np
 import tensorflow as tf
 
 
-import argparse
-
 user_flags = []
 
+
 def DEFINE_string(name, default_value, doc_string):
-    parser = argparse.ArgumentParser()
-    parser.add_argument(f"--{name}", type=str, default=default_value, help=doc_string)
-    global user_flags
-    user_flags.append((name, default_value, doc_string))
+  tf.app.flags.DEFINE_string(name, default_value, doc_string)
+  global user_flags
+  user_flags.append(name)
+
 
 def DEFINE_integer(name, default_value, doc_string):
-    parser = argparse.ArgumentParser()
-    parser.add_argument(f"--{name}", type=int, default=default_value, help=doc_string)
-    global user_flags
-    user_flags.append((name, default_value, doc_string))
+  tf.app.flags.DEFINE_integer(name, default_value, doc_string)
+  global user_flags
+  user_flags.append(name)
+
 
 def DEFINE_float(name, default_value, doc_string):
-    parser = argparse.ArgumentParser()
-    parser.add_argument(f"--{name}", type=float, default=default_value, help=doc_string)
-    global user_flags
-    user_flags.append((name, default_value, doc_string))
+  tf.app.flags.DEFINE_float(name, default_value, doc_string)
+  global user_flags
+  user_flags.append(name)
+
 
 def DEFINE_boolean(name, default_value, doc_string):
-    parser = argparse.ArgumentParser()
-    parser.add_argument(f"--{name}", action="store_true", help=doc_string)
-    parser.add_argument(f"--no_{name}", action="store_false")
-    parser.set_defaults(**{name: default_value})
-    global user_flags
-    user_flags.append((name, default_value, doc_string))
-
-def print_user_flags(line_limit=80):
-    print("-" * 80)
-
-    for name, default_value, doc_string in user_flags:
-        log_string = name
-        log_string += "." * (line_limit - len(name) - len(str(default_value)))
-        log_string += str(default_value)
-        print(log_string)
+  tf.app.flags.DEFINE_boolean(name, default_value, doc_string)
+  global user_flags
+  user_flags.append(name)
 
 
-# user_flags = []
-
-
-# def DEFINE_string(name, default_value, doc_string):
-#   tf.app.flags.DEFINE_string(name, default_value, doc_string)
-#   global user_flags
-#   user_flags.append(name)
-
-
-# def DEFINE_integer(name, default_value, doc_string):
-#   tf.app.flags.DEFINE_integer(name, default_value, doc_string)
-#   global user_flags
-#   user_flags.append(name)
-
-
-# def DEFINE_float(name, default_value, doc_string):
-#   tf.app.flags.DEFINE_float(name, default_value, doc_string)
-#   global user_flags
-#   user_flags.append(name)
-
-
-# def DEFINE_boolean(name, default_value, doc_string):
-#   tf.app.flags.DEFINE_boolean(name, default_value, doc_string)
-#   global user_flags
-#   user_flags.append(name)
-
-
-# def print_user_flags(line_limit=80):
-#   print("-" * 80)
-
-#   global user_flags
-#   FLAGS = tf.app.flags.FLAGS
-
-#   for flag_name in sorted(user_flags):
-#     value = "{}".format(getattr(FLAGS, flag_name))
-#     log_string = flag_name
-#     log_string += "." * (line_limit - len(flag_name) - len(value))
-#     log_string += value
-#     print(log_string)
+def print_user_flags(FLAGS, line_limit=80):
+  for flag_name in FLAGS.__dict__:
+    value = "{}".format(getattr(FLAGS, flag_name))
+    log_string = flag_name
+    log_string += "." * (line_limit - len(flag_name) - len(value))
+    log_string += value
+    print(log_string)
 
 
 class TextColors:
@@ -104,10 +61,6 @@ class Logger(object):
     self.terminal = sys.stdout
     self.log = open(output_file, "a")
 
-
-  def flush(self):
-    pass
-  
   def write(self, message):
     self.terminal.write(message)
     self.terminal.flush()
@@ -166,7 +119,7 @@ def get_train_ops(
     l2_loss = tf.add_n(l2_losses)
     loss += l2_reg * l2_loss
 
-  grads = tf.gradients(loss, tf_variables)
+  grads = tf.gradients(loss, tf_variables)   # 只在CPU算很长时间
   grad_norm = tf.global_norm(grads)
 
   grad_norms = {}
@@ -259,7 +212,7 @@ def get_train_ops(
   elif optim_algo == "sgd":
     opt = tf.train.GradientDescentOptimizer(learning_rate, use_locking=True)
   elif optim_algo == "adam":
-    opt = tf.train.AdamOptimizer(learning_rate, beta1=0.0, epsilon=1e-3,
+    opt = tf.keras.optimizers.legacy.Adam(learning_rate, beta1=0.0, epsilon=1e-3,
                                  use_locking=True)
   else:
     raise ValueError("Unknown optim_algo {}".format(optim_algo))

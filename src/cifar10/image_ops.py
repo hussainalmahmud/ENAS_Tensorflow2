@@ -14,7 +14,7 @@ def drop_path(x, keep_prob):
   random_tensor = keep_prob
   random_tensor += tf.random_uniform(noise_shape, dtype=tf.float32)
   binary_tensor = tf.floor(random_tensor)
-  x = tf.div(x, keep_prob) * binary_tensor
+  x = tf.div(x, keep_prob) * binary_tensor   # 对应位置相除
 
   return x
 
@@ -89,96 +89,5 @@ def global_avg_pool(x, data_format="NHWC"):
   return x
 
 
-def batch_norm(x, is_training, name="bn", decay=0.9, epsilon=1e-5,
-               data_format="NHWC"):
-  if data_format == "NHWC":
-    shape = [x.get_shape()[3]]
-  elif data_format == "NCHW":
-    shape = [x.get_shape()[1]]
-  else:
-    raise NotImplementedError("Unknown data_format {}".format(data_format))
-
-  with tf.variable_scope(name, reuse=None if is_training else True):
-    offset = tf.get_variable(
-      "offset", shape,
-      initializer=tf.constant_initializer(0.0, dtype=tf.float32))
-    scale = tf.get_variable(
-      "scale", shape,
-      initializer=tf.constant_initializer(1.0, dtype=tf.float32))
-    moving_mean = tf.get_variable(
-      "moving_mean", shape, trainable=False,
-      initializer=tf.constant_initializer(0.0, dtype=tf.float32))
-    moving_variance = tf.get_variable(
-      "moving_variance", shape, trainable=False,
-      initializer=tf.constant_initializer(1.0, dtype=tf.float32))
-
-    if is_training:
-      x, mean, variance = tf.nn.fused_batch_norm(
-        x, scale, offset, epsilon=epsilon, data_format=data_format,
-        is_training=True)
-      update_mean = moving_averages.assign_moving_average(
-        moving_mean, mean, decay)
-      update_variance = moving_averages.assign_moving_average(
-        moving_variance, variance, decay)
-      with tf.control_dependencies([update_mean, update_variance]):
-        x = tf.identity(x)
-    else:
-      x, _, _ = tf.nn.fused_batch_norm(x, scale, offset, mean=moving_mean,
-                                       variance=moving_variance,
-                                       epsilon=epsilon, data_format=data_format,
-                                       is_training=False)
-  return x
-
-
-def batch_norm_with_mask(x, is_training, mask, num_channels, name="bn",
-                         decay=0.9, epsilon=1e-3, data_format="NHWC"):
-
-  shape = [num_channels]
-  indices = tf.where(mask)
-  indices = tf.to_int32(indices)
-  indices = tf.reshape(indices, [-1])
-
-  with tf.variable_scope(name, reuse=None if is_training else True):
-    offset = tf.get_variable(
-      "offset", shape,
-      initializer=tf.constant_initializer(0.0, dtype=tf.float32))
-    scale = tf.get_variable(
-      "scale", shape,
-      initializer=tf.constant_initializer(1.0, dtype=tf.float32))
-    offset = tf.boolean_mask(offset, mask)
-    scale = tf.boolean_mask(scale, mask)
-
-    moving_mean = tf.get_variable(
-      "moving_mean", shape, trainable=False,
-      initializer=tf.constant_initializer(0.0, dtype=tf.float32))
-    moving_variance = tf.get_variable(
-      "moving_variance", shape, trainable=False,
-      initializer=tf.constant_initializer(1.0, dtype=tf.float32))
-
-    if is_training:
-      x, mean, variance = tf.nn.fused_batch_norm(
-        x, scale, offset, epsilon=epsilon, data_format=data_format,
-        is_training=True)
-      mean = (1.0 - decay) * (tf.boolean_mask(moving_mean, mask) - mean)
-      variance = (1.0 - decay) * (tf.boolean_mask(moving_variance, mask) - variance)
-      update_mean = tf.scatter_sub(moving_mean, indices, mean, use_locking=True)
-      update_variance = tf.scatter_sub(
-        moving_variance, indices, variance, use_locking=True)
-      with tf.control_dependencies([update_mean, update_variance]):
-        x = tf.identity(x)
-    else:
-      masked_moving_mean = tf.boolean_mask(moving_mean, mask)
-      masked_moving_variance = tf.boolean_mask(moving_variance, mask)
-      x, _, _ = tf.nn.fused_batch_norm(x, scale, offset,
-                                       mean=masked_moving_mean,
-                                       variance=masked_moving_variance,
-                                       epsilon=epsilon, data_format=data_format,
-                                       is_training=False)
-  return x
-
-
 def relu(x, leaky=0.0):
   return tf.where(tf.greater(x, 0), x, x * leaky)
-
-def relu6(x):
-  return tf.nn.relu6(x)

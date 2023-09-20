@@ -9,12 +9,13 @@ import time
 
 import numpy as np
 import tensorflow as tf
+# tf.config.run_functions_eagerly(True)
 
 from src import utils
 from src.utils import Logger
-from src.cifar10.data_utils import read_data
-from src.cifar10.general_controller import GeneralController
-from src.cifar10.general_child import GeneralChild
+from src.cifar10_1.data_utils import read_data
+from src.cifar10_1.general_controller import GeneralController
+from src.cifar10_1.general_child import GeneralChild
 import warnings
 warnings.filterwarnings("ignore",category=FutureWarning)	
 
@@ -235,8 +236,8 @@ def train():
     if args.child_fixed_arc is None:
         images, labels = read_data(args.controller_dataset)
     else:
-        images, labels = read_data(args.controller_dataset, num_valids=0)
-
+        images, labels = read_data(args.controller_dataset, num_valids=5000)
+    
     # Create a new graph, and make it the default.
     g = tf.Graph()
     # Set the new graph as the default graph.
@@ -404,29 +405,3 @@ if __name__ == "__main__":
     utils.print_user_flags()
     train()  # Pass the args to the train function
 
-
-
-# def main(_):
-#     print("-" * 80)
-#     if not os.path.isdir(args.output_dir):
-#         print("Path {} does not exist. Creating.".format(args.output_dir))
-#         os.makedirs(args.output_dir)
-#     elif args.reset_output_dir:
-#         print("Path {} exists. Remove and remake.".format(args.output_dir))
-#         shutil.rmtree(args.output_dir)
-#         os.makedirs(args.output_dir)
-
-#     print("-" * 80)
-#     log_file = os.path.join(args.output_dir, "stdout")
-#     print("Logging to {}".format(log_file))
-#     sys.stdout = Logger(log_file)
-
-#     utils.print_user_flags()
-#     train()  # Pass the args to the train function
-
-
-
-# if __name__ == "__main__":
-  
-#   # tf.app.run() 
-#   tf.compat.v1.app.run()

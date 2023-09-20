@@ -36,8 +36,8 @@ class ConvController(Controller):
                num_replicas=None,
                name="controller"):
 
-    print ("-" * 80)
-    print( "Building ConvController")
+    print("-" * 80)
+    print("Building ConvController")
 
     self.num_branches = num_branches
     self.num_layers = num_layers
@@ -66,72 +66,69 @@ class ConvController(Controller):
     self._build_sampler()
 
   def _create_params(self):
-    with tf.variable_scope(self.name):
-      with tf.variable_scope("lstm"):
-        self.w_lstm = []
-        for layer_id in xrange(self.lstm_num_layers):
-          with tf.variable_scope("layer_{}".format(layer_id)):
-            w = tf.get_variable("w", [2 * self.lstm_size, 4 * self.lstm_size])
-            self.w_lstm.append(w)
 
-      self.num_configs = (2 ** self.num_blocks_per_branch) - 1
-      with tf.variable_scope("embedding"):
-        self.g_emb = tf.get_variable("g_emb", [1, self.lstm_size])
-        self.w_emb = tf.get_variable("w", [self.num_blocks_per_branch,
-                                           self.lstm_size])
-
-      with tf.variable_scope("softmax"):
-        self.w_soft = tf.get_variable("w", [self.lstm_size,
-                                            self.num_blocks_per_branch])
-      with tf.variable_scope("critic"):
-        self.w_critic = tf.get_variable("w", [self.lstm_size, 1])
+    with tf.compat.v1.variable_scope(self.name):
+        with tf.compat.v1.variable_scope("lstm"):
+            self.w_lstm = []
+            for layer_id in range(self.lstm_num_layers):
+                with tf.compat.v1.variable_scope(f"layer_{layer_id}"):
+                    w = tf.compat.v1.get_variable("w", [2 * self.lstm_size, 4 * self.lstm_size])
+                    self.w_lstm.append(w)
+        self.num_configs = (2 ** self.num_blocks_per_branch) - 1
+        with tf.compat.v1.variable_scope("embedding"):
+            self.g_emb = tf.compat.v1.get_variable("g_emb", [1, self.lstm_size])
+            self.w_emb = tf.compat.v1.get_variable("w", [self.num_blocks_per_branch, self.lstm_size])
+        with tf.compat.v1.variable_scope("softmax"):
+            self.w_soft = tf.compat.v1.get_variable("w", [self.lstm_size, self.num_blocks_per_branch])
+        with tf.compat.v1.variable_scope("critic"):
+            self.w_critic = tf.compat.v1.get_variable("w", [self.lstm_size, 1])
 
   def _build_sampler(self):
-    """Build the sampler ops and the log_prob ops."""
+      """Build the sampler ops and the log_prob ops."""
 
-    arc_seq = []
-    sample_log_probs = []
-    all_h = []
+      arc_seq = []
+      sample_log_probs = []
+      all_h = []
 
-    # sampler ops
-    inputs = self.g_emb
-    prev_c = [tf.zeros([1, self.lstm_size], dtype=tf.float32)
-              for _ in xrange(self.lstm_num_layers)]
-    prev_h = [tf.zeros([1, self.lstm_size], dtype=tf.float32)
-              for _ in xrange(self.lstm_num_layers)]
-    for layer_id in xrange(self.num_layers):
-      for branch_id in xrange(self.num_branches):
-        next_c, next_h = stack_lstm(inputs, prev_c, prev_h, self.w_lstm)
-        all_h.append(tf.stop_gradient(next_h[-1]))
+      # sampler ops
+      inputs = self.g_emb
+      prev_c = [tf.zeros([1, self.lstm_size], dtype=tf.float32) for _ in range(self.lstm_num_layers)]
+      prev_h = [tf.zeros([1, self.lstm_size], dtype=tf.float32) for _ in range(self.lstm_num_layers)]
+      
+      for layer_id in range(self.num_layers):
+          for branch_id in range(self.num_branches):
+            next_c, next_h = stack_lstm(inputs, prev_c, prev_h, self.w_lstm)
+            all_h.append(tf.stop_gradient(next_h[-1]))
 
-        logits = tf.matmul(next_h[-1], self.w_soft)
-        if self.temperature is not None:
-          logits /= self.temperature
-        if self.tanh_constant is not None:
-          logits = self.tanh_constant * tf.tanh(logits)
+            logits = tf.matmul(next_h[-1], self.w_soft)
+            
+            if self.temperature is not None:
+                logits /= self.temperature
+            if self.tanh_constant is not None:
+                logits = self.tanh_constant * tf.tanh(logits)
 
-        config_id = tf.multinomial(logits, 1)
-        config_id = tf.to_int32(config_id)
-        config_id = tf.reshape(config_id, [1])
-        arc_seq.append(config_id)
-        log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            logits=logits, labels=config_id)
-        sample_log_probs.append(log_prob)
+            config_id = tf.random.categorical(logits, 1)
+            config_id = tf.cast(config_id, tf.int32)
+            config_id = tf.reshape(config_id, [1])
+            arc_seq.append(config_id)
+            
+            log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=config_id)
+            sample_log_probs.append(log_prob)
 
-        inputs = tf.nn.embedding_lookup(self.w_emb, config_id)
-    arc_seq = tf.concat(arc_seq, axis=0)
-    self.sample_arc = arc_seq
+            inputs = tf.gather(self.w_emb, config_id)
 
-    self.sample_log_probs = tf.concat(sample_log_probs, axis=0)
-    self.ppl = tf.exp(tf.reduce_sum(self.sample_log_probs) /
-                      tf.to_float(self.num_layers * self.num_branches))
-    self.all_h = all_h
+      arc_seq = tf.concat(arc_seq, axis=0)
+      self.sample_arc = arc_seq
+
+      self.sample_log_probs = tf.concat(sample_log_probs, axis=0)
+      self.ppl = tf.exp(tf.reduce_sum(self.sample_log_probs) / tf.cast(self.num_layers * self.num_branches, tf.float32))
+      self.all_h = all_h
 
   def build_trainer(self, child_model):
     # actor
     child_model.build_valid_rl()
-    self.valid_acc = (tf.to_float(child_model.valid_shuffle_acc) /
-                      tf.to_float(child_model.batch_size))
+    self.valid_acc = tf.cast(child_model.valid_shuffle_acc, tf.float32) / tf.cast(child_model.batch_size, tf.float32)
+
     self.reward = self.valid_acc
 
     if self.use_critic:
@@ -170,9 +167,9 @@ class ConvController(Controller):
     tf_variables = [var for var in tf.trainable_variables()
                     if var.name.startswith(self.name)
                       and "w_critic" not in var.name]
-    print ("-" * 80)
+    print("-" * 80)
     for var in tf_variables:
-      print (var)
+      print(var)
     self.train_op, self.lr, self.grad_norm, self.optimizer = get_train_ops(
       self.loss,
       tf_variables,
