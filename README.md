@@ -58,8 +58,8 @@ Subsequent parts, such as `[2 1]`, consist of an operation type and a sequence. 
 
 ## To-Do List
 
-- [x] Task 1: Implement Macro-search for training
-- [ ]  Task 1: Implement Macro-search for Re-training
+- [x] Task 1: Implement Macro-search for `Training` phase
+- [ ] Task 2: Implement Macro-search for `Re-training` phase
 
 ## 🙏 Acknowledgements
 
