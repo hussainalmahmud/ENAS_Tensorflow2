@@ -30,12 +30,6 @@ Execute the following script to begin the training:
 sh scripts/cf10_macro_search.sh
 ```
 
-## To-Do List
-
-- [ ] Task 1: Implement Macro-search for training
-- [x]  Task 1: Implement Macro-search for Re-training
-
-
 ## Running the ENAS Script & Understanding Macro Search
 When sh scripts/cf10_macro_search.sh is run, the ENAS algorithm proceeds through key stages:
 
@@ -60,6 +54,12 @@ val_acc=0.2542
 ```
 The first part `[4]` indicates the operation (e.g., convolution type) at the first layer.
 Subsequent parts, such as `[2 1]`, consist of an operation type and a sequence. The sequence, comprised of `0s` and `1s`, indicates whether **a skip connection** is formed from previous layers to the current one. For instance, `[2 1]` implies an operation of type `2` at the second layer and a skip connection from layer `1` to layer `2`.
+
+
+## To-Do List
+
+- [x] Task 1: Implement Macro-search for training
+- [ ]  Task 1: Implement Macro-search for Re-training
 
 ## 🙏 Acknowledgements
 
