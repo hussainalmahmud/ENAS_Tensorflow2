@@ -3,7 +3,7 @@
 __pycache__/
 *.cpython-310.pyc
 ## IGNORE DATA FILE
-data/
+data/cifar10/
 
 archive/
 output*/
