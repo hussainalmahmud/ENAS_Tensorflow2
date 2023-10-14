@@ -6,5 +6,5 @@ __pycache__/
 data/cifar10/
 
 archive/
-output*/
+output/
 ```

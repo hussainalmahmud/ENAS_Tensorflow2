@@ -1,42 +1,57 @@
 #!/bin/bash
 
-export PYTHONPATH="$(pwd)"
+# Example Bash script to run main.py with arguments
 
-python src/cifar10/main.py \
-  --data_format="NCWH" \
-  --search_for="macro" \
-  --reset_output_dir \
-  --batch_size=128 \
-  --num_epochs=310 \
-  --log_every=50 \
-  --eval_every_epochs=1 \
-  --child_use_aux_heads \
-  --child_num_layers=4 \
-  --child_out_filters=32 \
-  --controller_PE_Size=16 \
-  --controller_dataset="cifar10" \
-  --controller_Alpha_value=0.0 \
-  --child_l2_reg=0.00025 \
-  --child_num_branches=7 \
-  --child_num_cell_layers=5 \
-  --child_keep_prob=0.90 \
-  --child_drop_path_keep_prob=0.60 \
-  --child_lr_cosine \
-  --child_lr_max=0.05 \
-  --child_lr_min=0.0005 \
-  --child_lr_T_0=10 \
-  --child_lr_T_mul=2 \
-  --controller_training \
-  --controller_search_whole_channels \
-  --controller_entropy_weight=0.0001 \
-  --controller_train_every=1 \
-  --controller_sync_replicas \
-  --controller_num_aggregate=20 \
-  --controller_train_steps=50 \
-  --controller_lr=0.001 \
-  --controller_tanh_constant=1.5 \
-  --controller_op_tanh_reduce=2.5 \
-  --controller_skip_target=0.4 \
-  --controller_skip_weight=0.8 \
-  "$@"
-
+python main.py \
+--reset_output_dir=True \
+--data_path="data/cifar10/" \
+--output_dir="./output/test" \
+--data_format="NHWC" \
+--search_for="macro" \
+--train_batch_size=64 \
+--eval_batch_size=64 \
+--num_epochs=300 \
+--eval_every_epochs=1 \
+--controller_training=True \
+--child_num_layers=8 \
+--child_filter_size=5 \
+--child_out_filters=16 \
+--child_out_filters_scale=1 \
+--child_num_branches=6 \
+--child_block_size=3 \
+--child_num_cell_layers=5 \
+--child_keep_prob=0.90 \
+--child_optim="adam" \
+--child_train_log_every=100 \
+--child_lr_dec_every=100 \
+--child_lr_dec_rate=0.25 \
+--child_lr=0.002 \
+--child_lr_cosine=False \
+--child_lr_T_0=10 \
+--child_lr_T_mul=2 \
+--child_lr_min=1e-4 \
+--child_clip_mode="global" \
+--child_grad_bound=5.0 \
+--child_sync_replicas=False \
+--child_use_aux_heads=True \
+--child_num_replicas=1 \
+--child_drop_path_keep_prob=0.6 \
+--child_l2_reg=0.00025 \
+--controller_train_steps=50 \
+--controller_log_every=10 \
+--controller_forwards_limit=2 \
+--controller_train_every=1 \
+--controller_search_whole_channels=True \
+--controller_use_critic=False \
+--controller_lr=1e-3 \
+--controller_lr_dec_rate=1.0 \
+--controller_entropy_weight=0.0001 \
+--controller_skip_target=0.4 \
+--controller_skip_weight=0.8 \
+--controller_l2_reg=0.0 \
+--controller_bl_dec=0.99 \
+--controller_tanh_constant=1.10 \
+--controller_op_tanh_reduce=2.5 \
+--controller_num_aggregate=1 \
+--controller_num_replicas=1 \
+--controller_sync_replicas=False

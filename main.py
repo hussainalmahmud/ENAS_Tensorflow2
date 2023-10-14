@@ -19,8 +19,6 @@ from src.utils import print_user_flags
 from src.cifar10.general_controller import GeneralController
 from src.cifar10.general_child import GeneralChild
 
-# from src.cifar10.micro_controller import MicroController
-# from src.cifar10.micro_child import MicroChild
 import argparse
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"   # TODO
@@ -28,8 +26,8 @@ tf.get_logger().setLevel('ERROR')
 parser = argparse.ArgumentParser(description='enas')
 parser.add_argument('--reset_output_dir', default=True,
                     help='Delete output_dir if exists')  # action='store_true'
-# parser.add_argument('--data_path', default="data/cifar10/", help='')
-parser.add_argument('--data_path', default="cifar10", help='') # using keras dataset
+parser.add_argument('--data_path', default="data/cifar10/", help='')
+# parser.add_argument('--data_path', default="cifar10", help='') # using keras dataset
 
 parser.add_argument('--output_dir', default="./output/test", help='')  # TODO
 parser.add_argument('--data_format', default="NHWC", help=" 'NHWC' or 'NCWH'")
