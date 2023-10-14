@@ -4,3 +4,7 @@ __pycache__/
 *.cpython-310.pyc
 ## IGNORE DATA FILE
 data/
+
+archive/
+output*/
+```
