@@ -37,9 +37,9 @@ Controller Training: A controller proposes new neural network architectures, whi
 
 Architecture Validation: The controller suggests several architectures that are then validated on a dataset, with their performance metrics reported.
 
-Example output snippet:
+### Example output snippet:
 In the ENAS macro search space, each network, comprising 
-N layers, is described by N parts. For instance, in an 8-layer network example from the script output:
+`N` layers, is described by `N` parts. For instance, in an 8-layer network example from the script output:
 
 ```
 [4]
