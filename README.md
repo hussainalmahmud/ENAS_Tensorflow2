@@ -32,15 +32,8 @@ sh scripts/cf10_macro_search.sh
 
 ## To-Do List
 
-- ✔️ Task 1: Implement Macro-search for training
-- ❌  Task 1: Implement Macro-search for Re-training
-
-## To-Do List
-
-- [x] Task 1: Description of task 1
-- [ ] Task 2: Description of task 2
-  - [x] Subtask 2.1: Description of subtask 2.1
-  - [ ] Subtask 2.2: Description of subtask 2.2
+- [ ] Task 1: Implement Macro-search for training
+- [x]  Task 1: Implement Macro-search for Re-training
 
 
 ## Running the ENAS Script & Understanding Macro Search
